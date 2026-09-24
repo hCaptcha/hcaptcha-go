@@ -1,0 +1,55 @@
+name: Release verification
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Validate release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          semver_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$'
+          [[ "$GITHUB_REF_NAME" =~ $semver_pattern ]]
+          test "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = tag
+          tag_object_sha="$(git rev-parse "refs/tags/$GITHUB_REF_NAME")"
+          tag_object="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object_sha")"
+          jq -e '.verification.verified == true' >/dev/null <<<"$tag_object"
+          git fetch origin main
+          git merge-base --is-ancestor "$(git rev-list -n 1 "$GITHUB_REF_NAME")" origin/main
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: "1.26.x"
+          check-latest: true
+          cache-dependency-path: go.mod
+
+      - name: Verify package
+        run: |
+          go mod verify
+          go test -race -count=1 ./...
+
+      - name: Run documented live Siteverify test
+        env:
+          HCAPTCHA_LIVE_TEST: "1"
+        run: go test -count=1 -run '^TestLiveSiteverify$' ./hcaptcha
+
+      - name: Scan dependency graph
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
