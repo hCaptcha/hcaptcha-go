@@ -28,7 +28,7 @@ import (
 func main() {
 	verifier, err := hcaptcha.New(os.Getenv("HCAPTCHA_SECRET"))
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("hcaptcha init failed: %v", err)
 	}
 	http.HandleFunc("/protected", func(w http.ResponseWriter, r *http.Request) {
 		protected(verifier, w, r)
@@ -59,6 +59,8 @@ func protected(verifier *hcaptcha.Client, w http.ResponseWriter, r *http.Request
 ```
 
 Use `Verify(token)` for the minimal case. `VerifyContext(ctx, token)` and `VerifyRequest(ctx, request)` propagate handler cancellation. `Request.Token` is required; `RemoteIP` and `SiteKey` are optional parameters sent only when non-empty.
+
+`Request.MaxRetries` optionally retries transport failures and HTTP 429/5xx responses with exponential backoff (100 ms initially, capped at 1 s). Zero, the default, makes one attempt. For example, set `MaxRetries: 2` to allow at most three attempts. Retries stop when the context is canceled. [Siteverify tokens are single-use](https://docs.hcaptcha.com/#verify-the-user-response-server-side): a failed transport call may already have consumed the token, so a retry can return `already-seen-response`. Never treat that response as success; obtain a fresh token after a failed verification.
 
 `Result` is `map[string]any`, retaining all fields returned by Siteverify. Treat a transport or decode `error` separately from an unsuccessful response, and fail closed in both cases. Check `success` before protected work. Inspect `error-codes` for operational logging; do not expose raw verification details to users.
 

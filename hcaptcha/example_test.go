@@ -2,6 +2,7 @@ package hcaptcha_test
 
 import (
 	"context"
+	"log"
 	"os"
 
 	hcaptcha "github.com/hCaptcha/hcaptcha-go/hcaptcha"
@@ -12,7 +13,7 @@ func ExampleClient_Verify() {
 	token := "response token from the application request"
 	verifier, err := hcaptcha.New(secret)
 	if err != nil {
-		return
+		log.Fatalf("hcaptcha init failed: %v", err)
 	}
 
 	result, err := verifier.Verify(token)
@@ -26,7 +27,7 @@ func ExampleClient_Verify() {
 func ExampleClient_VerifyRequest() {
 	verifier, err := hcaptcha.New(os.Getenv("HCAPTCHA_SECRET"))
 	if err != nil {
-		return
+		log.Fatalf("hcaptcha init failed: %v", err)
 	}
 	result, err := verifier.VerifyRequest(context.Background(), hcaptcha.Request{
 		Token:    "response token from the application request",

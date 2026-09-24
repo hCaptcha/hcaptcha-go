@@ -30,7 +30,7 @@ func main() {
 
 	verifier, err := hcaptcha.New(secret)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("hcaptcha init failed: %v", err)
 	}
 	app := application{verifier: verifier, siteKey: siteKey}
 

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -30,6 +31,81 @@ func TestVerifyRequestEncodesAllFields(t *testing.T) {
 	}
 	if result["success"] != true {
 		t.Errorf("result = %#v", result)
+	}
+}
+
+func TestVerifyRequestRetries(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		statuses    []int
+		body        string
+		maxRetries  int
+		wantCalls   int
+		wantError   bool
+		wantSuccess bool
+	}{
+		{"rate limit", []int{429, 200}, `{"success":true}`, 1, 2, false, true},
+		{"server error", []int{503, 502, 200}, `{"success":true}`, 2, 3, false, true},
+		{"exhausted", []int{503}, `{"success":true}`, 1, 2, true, false},
+		{"no retries by default", []int{503}, `{"success":true}`, 0, 1, true, false},
+		{"other HTTP status", []int{400}, `{"success":false}`, 2, 1, false, false},
+		{"verification rejected", []int{200}, `{"success":false}`, 2, 1, false, false},
+		{"malformed response", []int{200}, `{`, 2, 1, true, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			calls := 0
+			httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				status := test.statuses[min(calls, len(test.statuses)-1)]
+				calls++
+				return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(test.body))}, nil
+			})}
+			result, err := newClient("secret", "https://example.test", httpClient).VerifyRequest(t.Context(), Request{Token: "token", MaxRetries: test.maxRetries})
+			if (err != nil) != test.wantError {
+				t.Errorf("error = %v, wantError = %t", err, test.wantError)
+			}
+			if calls != test.wantCalls {
+				t.Errorf("calls = %d, want %d", calls, test.wantCalls)
+			}
+			if !test.wantError && result["success"] != test.wantSuccess {
+				t.Errorf("result = %#v", result)
+			}
+		})
+	}
+}
+
+func TestVerifyRequestRetriesTransportError(t *testing.T) {
+	calls := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		if calls == 1 {
+			return nil, errors.New("network unavailable")
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"success":true}`))}, nil
+	})}
+	result, err := newClient("secret", "https://example.test", httpClient).VerifyRequest(t.Context(), Request{Token: "token", MaxRetries: 1})
+	if err != nil || result["success"] != true || calls != 2 {
+		t.Errorf("result = %#v, error = %v, calls = %d", result, err, calls)
+	}
+}
+
+func TestVerifyRequestStopsRetryingOnCancellation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	calls := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{StatusCode: 503, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})}
+	_, err := newClient("secret", "https://example.test", httpClient).VerifyRequest(ctx, Request{Token: "token", MaxRetries: 2})
+	if !errors.Is(err, context.DeadlineExceeded) || calls != 1 {
+		t.Errorf("error = %v, calls = %d", err, calls)
+	}
+}
+
+func TestVerifyRequestRejectsNegativeRetries(t *testing.T) {
+	_, err := newClient("secret", "https://example.test", http.DefaultClient).VerifyRequest(t.Context(), Request{Token: "token", MaxRetries: -1})
+	if err == nil || err.Error() != "hcaptcha: max retries must not be negative" {
+		t.Errorf("error = %v, want negative-retries error", err)
 	}
 }
 

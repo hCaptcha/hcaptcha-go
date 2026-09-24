@@ -15,6 +15,8 @@ import (
 const (
 	siteverifyEndpoint = "https://api.hcaptcha.com/siteverify"
 	defaultTimeout     = time.Second
+	initialRetryDelay  = 100 * time.Millisecond
+	maxRetryDelay      = time.Second
 )
 
 // Result contains the Siteverify response. The basic response includes success
@@ -35,6 +37,10 @@ type Request struct {
 	// Recommended.
 	RemoteIP string
 	SiteKey  string
+
+	// MaxRetries retries transport errors and HTTP 429/5xx with exponential backoff.
+	// Zero disables retries. A retried token may have been consumed by a prior attempt.
+	MaxRetries int
 }
 
 // Client verifies tokens using the secret passed to New. A Client is safe to
@@ -91,10 +97,30 @@ func (client *Client) VerifyRequest(ctx context.Context, request Request) (Resul
 	if request.Token == "" {
 		return nil, errors.New("hcaptcha: token is required")
 	}
+	if request.MaxRetries < 0 {
+		return nil, errors.New("hcaptcha: max retries must not be negative")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	form := url.Values{"secret": {client.secret}, "response": {request.Token}}
 	setString(form, "remoteip", request.RemoteIP)
 	setString(form, "sitekey", request.SiteKey)
-	return client.call(ctx, client.endpoint, form)
+	delay := initialRetryDelay
+	for attempt := 0; ; attempt++ {
+		result, retryable, err := client.call(ctx, client.endpoint, form)
+		if err == nil || !retryable || attempt >= request.MaxRetries {
+			return result, err
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+		delay = min(delay*2, maxRetryDelay)
+	}
 }
 
 func setString(form url.Values, name, value string) {
@@ -103,26 +129,27 @@ func setString(form url.Values, name, value string) {
 	}
 }
 
-func (client *Client) call(ctx context.Context, endpoint string, form url.Values) (Result, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
+func (client *Client) call(ctx context.Context, endpoint string, form url.Values) (Result, bool, error) {
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBufferString(form.Encode()))
 	if err != nil {
-		return nil, fmt.Errorf("hcaptcha: create request: %w", err)
+		return nil, false, fmt.Errorf("hcaptcha: create request: %w", err)
 	}
 	httpRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	httpRequest.Header.Set("Accept", "application/json")
 
 	response, err := client.httpClient.Do(httpRequest)
 	if err != nil {
-		return nil, fmt.Errorf("hcaptcha: call siteverify: %w", err)
+		return nil, ctx.Err() == nil, fmt.Errorf("hcaptcha: call siteverify: %w", err)
 	}
 	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500 {
+		status := response.StatusCode
+		return nil, true, fmt.Errorf("hcaptcha: siteverify returned HTTP %d", status)
+	}
 
 	result := Result{}
 	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("hcaptcha: decode siteverify response: %w", err)
+		return nil, false, fmt.Errorf("hcaptcha: decode siteverify response: %w", err)
 	}
-	return result, nil
+	return result, false, nil
 }
