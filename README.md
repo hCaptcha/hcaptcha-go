@@ -12,32 +12,38 @@ Requires Go 1.24 or later.
 
 ## Use
 
-Set `HCAPTCHA_SECRET` in the server environment. Create a client once, then reuse it across handlers. `New` returns an error if the secret is unset.
+Set `HCAPTCHA_SECRET` in the server environment. Create a client at startup and exit if the secret is unset. Reuse the client across handlers.
 
 ```go
 package main
 
 import (
+	"log"
 	"net/http"
 	"os"
 
 	hcaptcha "github.com/hCaptcha/hcaptcha-go/hcaptcha"
 )
 
-var verifier, err = hcaptcha.New(os.Getenv("HCAPTCHA_SECRET"))
-
-func protected(w http.ResponseWriter, r *http.Request) {
+func main() {
+	verifier, err := hcaptcha.New(os.Getenv("HCAPTCHA_SECRET"))
 	if err != nil {
-		http.Error(w, "verification unavailable", http.StatusInternalServerError)
-		return
+		log.Fatal(err)
 	}
+	http.HandleFunc("/protected", func(w http.ResponseWriter, r *http.Request) {
+		protected(verifier, w, r)
+	})
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+
+func protected(verifier *hcaptcha.Client, w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	result, err := verifier.VerifyRequest(r.Context(), hcaptcha.Request{
-		Token:    r.FormValue("h-captcha-response"),
-		SiteKey:  "expected-sitekey-uuid", // Bind token to this sitekey.
+		Token:   r.FormValue("h-captcha-response"),
+		SiteKey: "expected-sitekey-uuid", // Bind token to this sitekey.
 	})
 	if err != nil {
 		http.Error(w, "verification unavailable", http.StatusBadGateway)
