@@ -1,0 +1,59 @@
+:root {
+  color-scheme: light dark;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  margin: 10vh auto;
+  max-width: 44rem;
+  padding: 0 1.25rem;
+}
+
+h1 {
+  font-size: clamp(2rem, 7vw, 4rem);
+  letter-spacing: -0.06em;
+  line-height: 0.95;
+}
+
+p {
+  line-height: 1.6;
+}
+
+.eyebrow {
+  font-size: 0.75rem;
+  letter-spacing: 0.14em;
+  opacity: 0.65;
+}
+
+form {
+  display: grid;
+  gap: 1rem;
+  justify-items: start;
+  margin-top: 2rem;
+}
+
+button {
+  cursor: pointer;
+  font: inherit;
+  padding: 0.7rem 1rem;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+pre {
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  margin-top: 2rem;
+  overflow: auto;
+  padding: 1rem;
+}
+
+.error {
+  color: #d33;
+}

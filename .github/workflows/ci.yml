@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  minimum-go:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up minimum supported Go version
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: "1.24.x"
+          cache-dependency-path: go.mod
+
+      - name: Test package
+        env:
+          GOTOOLCHAIN: local
+        run: go test ./...
+
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: "1.26.x"
+          check-latest: true
+          cache-dependency-path: go.mod
+
+      - name: Verify formatting and module metadata
+        run: |
+          test -z "$(gofmt -l .)"
+          go mod tidy -diff
+          go mod verify
+
+      - name: Check workflow syntax
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+      - name: Lint package
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.11.3
+          args: --config=.golangci.yml --timeout=5m ./...
+
+      - name: Test package
+        run: |
+          go vet ./...
+          go test -race -shuffle=on -count=1 ./...
+          go test -covermode=atomic -coverprofile=coverage.out ./hcaptcha
+          coverage="$(go tool cover -func=coverage.out | awk '/^total:/ {gsub(/%/, "", $3); print $3}')"
+          awk -v coverage="$coverage" 'BEGIN { if (coverage + 0 < 80) exit 1 }'
+
+      - name: Scan dependency graph
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
