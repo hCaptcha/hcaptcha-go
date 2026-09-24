@@ -12,18 +12,19 @@ Requires Go 1.24 or later.
 
 ## Use
 
-Create a client once with an hCaptcha service secret, then reuse it across handlers. Keep the secret only in server-side configuration.
+Set `HCAPTCHA_SECRET` in the server environment. Create a client once, then reuse it across handlers. `New` returns an error if the secret is unset.
 
 ```go
 package main
 
 import (
 	"net/http"
+	"os"
 
 	hcaptcha "github.com/hCaptcha/hcaptcha-go/hcaptcha"
 )
 
-var verifier, err = hcaptcha.New("server-side-secret")
+var verifier, err = hcaptcha.New(os.Getenv("HCAPTCHA_SECRET"))
 
 func protected(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
