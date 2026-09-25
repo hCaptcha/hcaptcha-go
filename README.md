@@ -12,7 +12,7 @@ Requires Go 1.24 or later.
 
 ## Use
 
-Set `HCAPTCHA_SECRET` in the server environment. Create a client at startup and exit if the secret is unset. Reuse the client across handlers.
+Read `HCAPTCHA_SECRET` at startup and reuse the verifier across handlers. `New` returns an error if the secret is empty; exit before serving requests.
 
 ```go
 package main
@@ -30,7 +30,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("hcaptcha init failed: %v", err)
 	}
-	http.HandleFunc("/protected", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("POST /protected", func(w http.ResponseWriter, r *http.Request) {
 		protected(verifier, w, r)
 	})
 	log.Fatal(http.ListenAndServe(":8080", nil))
@@ -41,9 +41,14 @@ func protected(verifier *hcaptcha.Client, w http.ResponseWriter, r *http.Request
 		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
+	token := r.PostForm.Get("h-captcha-response")
+	if token == "" {
+		http.Error(w, "token is required", http.StatusBadRequest)
+		return
+	}
 	result, err := verifier.VerifyRequest(r.Context(), hcaptcha.Request{
-		Token:   r.FormValue("h-captcha-response"),
-		SiteKey: "expected-sitekey-uuid", // Bind token to this sitekey.
+		Token:   token,
+		SiteKey: "expected-sitekey-uuid", // Require a token for this sitekey.
 	})
 	if err != nil {
 		http.Error(w, "verification unavailable", http.StatusBadGateway)
@@ -60,7 +65,9 @@ func protected(verifier *hcaptcha.Client, w http.ResponseWriter, r *http.Request
 
 Use `Verify(token)` for the minimal case. `VerifyContext(ctx, token)` and `VerifyRequest(ctx, request)` propagate handler cancellation. `Request.Token` is required; `RemoteIP` and `SiteKey` are optional parameters sent only when non-empty.
 
-`Request.MaxRetries` optionally retries transport failures and HTTP 429/5xx responses with exponential backoff (100 ms initially, capped at 1 s). Zero, the default, makes one attempt. For example, set `MaxRetries: 2` to allow at most three attempts. Retries stop when the context is canceled. [Siteverify tokens are single-use](https://docs.hcaptcha.com/#verify-the-user-response-server-side): a failed transport call may already have consumed the token, so a retry can return `already-seen-response`. Never treat that response as success; obtain a fresh token after a failed verification.
+`Request.MaxRetries` sets the number of extra attempts after transport errors or HTTP 429/5xx. The default `0` makes one attempt; `2` allows three. Delays start at 100 ms, double up to 1 s, and stop on context cancellation.
+
+[Production tokens are single-use](https://docs.hcaptcha.com/#verify-the-user-response-server-side). If Siteverify verifies a token but its response does not reach your server, a retry may return `already-seen-response`. Treat that as failure and obtain a fresh token.
 
 `Result` is `map[string]any`, retaining all fields returned by Siteverify. Treat a transport or decode `error` separately from an unsuccessful response, and fail closed in both cases. Check `success` before protected work. Inspect `error-codes` for operational logging; do not expose raw verification details to users.
 
@@ -78,13 +85,12 @@ Use the [Developer Guide](https://docs.hcaptcha.com/) for the complete browser-t
 ## Security and operations
 
 - Call Siteverify from the backend with a form-encoded POST. Do not expose the secret or accept a client-side success claim.
-- Verify tokens promptly and exactly once. hCaptcha tokens are short-lived and single-use.
+- Verify tokens promptly. hCaptcha tokens are short-lived and single-use.
 - Pass the expected `SiteKey` to prevent a token issued for another sitekey from being accepted. `hostname` is informational, not an authentication control.
 - Send `RemoteIP` when available, using an IP derived from a trusted-proxy policy. Do not trust forwarding headers from arbitrary clients.
 - Configure the hCaptcha domain allowlist and keep the secret in a secret manager or environment variable. [Rotate a leaked secret](https://docs.hcaptcha.com/#rotating-your-siteverify-secret) immediately.
 
 See hCaptcha’s [server-side verification guidance](https://docs.hcaptcha.com/#verify-the-user-response-server-side), [domain allowlist configuration](https://docs.hcaptcha.com/configuration#domain-allowlist), and [Siteverify error-code reference](https://docs.hcaptcha.com/#siteverify-error-codes-table).
-
 
 ## Example and testing
 

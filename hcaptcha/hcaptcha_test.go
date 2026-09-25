@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"net/url"
 	"reflect"
 	"strings"
@@ -70,6 +71,45 @@ func TestVerifyRequestRetries(t *testing.T) {
 				t.Errorf("result = %#v", result)
 			}
 		})
+	}
+}
+
+func TestVerifyRequestReusesConnectionAfterServerError(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = io.WriteString(w, "try again")
+			return
+		}
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer server.Close()
+
+	var reused []bool
+	ctx := httptrace.WithClientTrace(t.Context(), &httptrace.ClientTrace{
+		GotConn: func(info httptrace.GotConnInfo) { reused = append(reused, info.Reused) },
+	})
+	result, err := newClient("secret", server.URL, server.Client()).VerifyRequest(ctx, Request{Token: "token", MaxRetries: 1})
+	if err != nil || result["success"] != true {
+		t.Fatalf("result = %#v, error = %v", result, err)
+	}
+	if len(reused) != 2 || !reused[1] {
+		t.Errorf("connection reuse = %v, want [false true]", reused)
+	}
+}
+
+func TestVerifyRequestBoundsErrorBodyDrain(t *testing.T) {
+	body := strings.NewReader(strings.Repeat("x", maxRetryBodyBytes+10))
+	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(body)}, nil
+	})}
+	_, err := newClient("secret", "https://example.test", httpClient).VerifyRequest(t.Context(), Request{Token: "token"})
+	if err == nil {
+		t.Fatal("VerifyRequest() error = nil, want HTTP 503 error")
+	}
+	if got := body.Len(); got != 9 {
+		t.Errorf("unread body bytes = %d, want 9", got)
 	}
 }
 

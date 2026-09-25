@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"time"
@@ -17,6 +18,7 @@ const (
 	defaultTimeout     = time.Second
 	initialRetryDelay  = 100 * time.Millisecond
 	maxRetryDelay      = time.Second
+	maxRetryBodyBytes  = 2 << 10
 )
 
 // Result contains the Siteverify response. The basic response includes success
@@ -38,8 +40,9 @@ type Request struct {
 	RemoteIP string
 	SiteKey  string
 
-	// MaxRetries retries transport errors and HTTP 429/5xx with exponential backoff.
-	// Zero disables retries. A retried token may have been consumed by a prior attempt.
+	// MaxRetries is the number of extra attempts after a transport error or HTTP 429/5xx.
+	// Zero means no retries. Siteverify may verify a token even if this client gets an error.
+	// Retrying that token can fail because tokens are single-use.
 	MaxRetries int
 }
 
@@ -143,6 +146,7 @@ func (client *Client) call(ctx context.Context, endpoint string, form url.Values
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500 {
+		_, _ = io.CopyN(io.Discard, response.Body, maxRetryBodyBytes+1)
 		status := response.StatusCode
 		return nil, true, fmt.Errorf("hcaptcha: siteverify returned HTTP %d", status)
 	}
