@@ -18,7 +18,7 @@ const (
 	defaultTimeout     = time.Second
 	initialRetryDelay  = 100 * time.Millisecond
 	maxRetryDelay      = time.Second
-	maxRetryBodyBytes  = 2 << 10
+	maxErrorBodyBytes  = 2 << 10
 )
 
 // Result contains the Siteverify response. The basic response includes success
@@ -145,15 +145,20 @@ func (client *Client) call(ctx context.Context, endpoint string, form url.Values
 		return nil, ctx.Err() == nil, fmt.Errorf("hcaptcha: call siteverify: %w", err)
 	}
 	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500 {
-		_, _ = io.CopyN(io.Discard, response.Body, maxRetryBodyBytes+1)
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		_, _ = io.CopyN(io.Discard, response.Body, maxErrorBodyBytes+1)
 		status := response.StatusCode
-		return nil, true, fmt.Errorf("hcaptcha: siteverify returned HTTP %d", status)
+		retryable := status == http.StatusTooManyRequests || status >= 500
+		return nil, retryable, fmt.Errorf("hcaptcha: siteverify returned HTTP %d", status)
 	}
 
 	result := Result{}
-	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+	decoder := json.NewDecoder(response.Body)
+	if err := decoder.Decode(&result); err != nil {
 		return nil, false, fmt.Errorf("hcaptcha: decode siteverify response: %w", err)
+	}
+	if err := decoder.Decode(new(json.RawMessage)); err != io.EOF {
+		return nil, false, errors.New("hcaptcha: siteverify response has trailing data")
 	}
 	return result, false, nil
 }

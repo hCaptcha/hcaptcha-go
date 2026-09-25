@@ -49,9 +49,11 @@ func TestVerifyRequestRetries(t *testing.T) {
 		{"server error", []int{503, 502, 200}, `{"success":true}`, 2, 3, false, true},
 		{"exhausted", []int{503}, `{"success":true}`, 1, 2, true, false},
 		{"no retries by default", []int{503}, `{"success":true}`, 0, 1, true, false},
-		{"other HTTP status", []int{400}, `{"success":false}`, 2, 1, false, false},
+		{"client error", []int{400}, `{"success":true}`, 2, 1, true, false},
+		{"redirect", []int{307}, `{"success":true}`, 2, 1, true, false},
 		{"verification rejected", []int{200}, `{"success":false}`, 2, 1, false, false},
 		{"malformed response", []int{200}, `{`, 2, 1, true, false},
+		{"trailing response data", []int{200}, `{"success":true}{"success":false}`, 2, 1, true, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			calls := 0
@@ -100,7 +102,7 @@ func TestVerifyRequestReusesConnectionAfterServerError(t *testing.T) {
 }
 
 func TestVerifyRequestBoundsErrorBodyDrain(t *testing.T) {
-	body := strings.NewReader(strings.Repeat("x", maxRetryBodyBytes+10))
+	body := strings.NewReader(strings.Repeat("x", maxErrorBodyBytes+10))
 	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(body)}, nil
 	})}
@@ -197,7 +199,6 @@ func TestVerifyRejectsEmptyTokenBeforeRequest(t *testing.T) {
 
 func TestVerifyAcceptsEvolvingResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusTeapot)
 		_, _ = io.WriteString(w, `{"success":"now-a-string","new":{"nested":[1,true,null]},"number":1.5}`)
 	}))
 	defer server.Close()
@@ -229,11 +230,8 @@ func TestVerifyDoesNotFollowRedirects(t *testing.T) {
 	defer origin.Close()
 
 	result, err := newClient("secret", origin.URL, origin.Client()).Verify("token")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result["success"] != true || result["redirect"] != true {
-		t.Errorf("result = %#v", result)
+	if err == nil || result != nil {
+		t.Errorf("result = %#v, error = %v, want redirect error", result, err)
 	}
 	if got := targetCalls.Load(); got != 0 {
 		t.Errorf("redirect target calls = %d, want 0", got)

@@ -8,7 +8,6 @@ export default defineConfig(({ mode }) => {
     "/api": {
       target: env.GO_BACKEND_URL || "http://127.0.0.1:8080",
       changeOrigin: false,
-      xfwd: true,
       rewrite: (path: string) => path.replace(/^\/api/, ""),
     },
   };

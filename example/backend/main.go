@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -30,7 +29,7 @@ func main() {
 
 	verifier, err := hcaptcha.New(secret)
 	if err != nil {
-		log.Fatalf("hcaptcha init failed: %v", err)
+		log.Fatal(err)
 	}
 	app := application{verifier: verifier, siteKey: siteKey}
 
@@ -63,16 +62,15 @@ func (app application) protected(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid form"})
 		return
 	}
-	token := strings.TrimSpace(r.FormValue("h-captcha-response"))
+	token := strings.TrimSpace(r.PostForm.Get("h-captcha-response"))
 	if token == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "valid token is required"})
 		return
 	}
 
 	result, err := app.verifier.VerifyRequest(r.Context(), hcaptcha.Request{
-		Token:    token,
-		RemoteIP: clientIP(r),
-		SiteKey:  app.siteKey,
+		Token:   token,
+		SiteKey: app.siteKey,
 	})
 	if err != nil {
 		log.Printf("siteverify call failed: %v", err)
@@ -87,23 +85,6 @@ func (app application) protected(w http.ResponseWriter, r *http.Request) {
 
 	// Perform the protected action.
 	writeJSON(w, http.StatusOK, map[string]any{"siteverify": result})
-}
-
-func clientIP(r *http.Request) string {
-	peer, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return ""
-	}
-	peerIP := net.ParseIP(peer)
-	if peerIP == nil || !peerIP.IsLoopback() {
-		return peer
-	}
-
-	forwarded := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-For"), ",")[0])
-	if net.ParseIP(forwarded) != nil {
-		return forwarded
-	}
-	return peer
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

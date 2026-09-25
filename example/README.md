@@ -9,16 +9,14 @@ remain same-origin.
 
 ```sh
 cd example
-cp .env.local.example .env.local
-npm install
+cp -n .env.local.example .env.local
+npm ci
 ./run.sh
 ```
 
 hCaptcha's [local development guide](https://docs.hcaptcha.com/#local-development)
-lists `localhost` and `127.0.0.1` as unsupported hostnames. On a loopback URL,
-this example can still show a challenge and pass Siteverify, though users may
-need to click the checkbox a few times. The hostname warning makes that flow
-unreliable. To solve challenges locally without the warning:
+lists `localhost` and `127.0.0.1` as unsupported hostnames. For real keys, use a
+development hostname:
 
 1. Choose a development hostname under a domain you control, such as
    `captcha-dev.example.com` (replace this placeholder with your own hostname).
@@ -42,11 +40,10 @@ to `ALLOWED_HOSTS` and, when enabled, the sitekey's domain allowlist. If hCaptch
 reports [`network-error`](https://docs.hcaptcha.com/configuration#error-codes)
 on the mapped hostname, inspect browser requests and blockers.
 
-The backend binds to `127.0.0.1:8080`. It accepts `X-Forwarded-For` only from a
-loopback peer (the Vite proxy), sends that IP and the expected sitekey to
+The backend binds to `127.0.0.1:8080`, sends the expected sitekey to
 [Siteverify](https://docs.hcaptcha.com/#verify-the-user-response-server-side),
-and returns the full Siteverify result for inspection. Do not copy
-that diagnostic response behavior into a production endpoint.
+and returns the full Siteverify result for inspection. Do not copy that
+diagnostic response behavior into a production endpoint.
 
 ## Expected checks
 

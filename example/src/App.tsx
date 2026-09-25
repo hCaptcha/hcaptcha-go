@@ -38,8 +38,7 @@ export function App() {
       <h1>hCaptcha Go integration</h1>
       <p>
         Complete the challenge, then send the token through the Vite proxy to
-        the Go backend. The response below is the package&apos;s unmodified
-        Siteverify result.
+        the Go backend. The response below includes the full Siteverify result.
       </p>
       {!siteKey && <p className="error">VITE_HCAPTCHA_SITEKEY is missing.</p>}
       {widgetError && <p className="error">{widgetError}</p>}
@@ -48,7 +47,10 @@ export function App() {
           <HCaptcha
             ref={captcha}
             sitekey={siteKey}
-            onVerify={setToken}
+            onVerify={(value) => {
+              setWidgetError("");
+              setToken(value);
+            }}
             onExpire={() => setToken("")}
             onError={(error) => {
               setToken("");

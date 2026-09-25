@@ -11,11 +11,18 @@ set -a
 . ./.env.local
 set +a
 
+backend_dir=$(mktemp -d)
+backend_pid=
 cleanup() {
-  kill "$backend_pid" 2>/dev/null || true
+  if [ -n "$backend_pid" ]; then
+    kill "$backend_pid" 2>/dev/null || true
+    wait "$backend_pid" 2>/dev/null || true
+  fi
+  rm -rf "$backend_dir"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
 
-go run ./backend &
+go build -o "$backend_dir/backend" ./backend
+"$backend_dir/backend" &
 backend_pid=$!
 npm run dev
